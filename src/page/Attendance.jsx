@@ -7,6 +7,7 @@ import toast from "react-hot-toast";
 import Spinner from "../component/Spinner";
 import dayjs from "dayjs";
 import logo from "../assets/smartickk.png";
+import { getDeviceFingerprint, storeDeviceFingerprint, verifyDeviceFingerprint } from "../utils/deviceFingerprint";
 
 const Attendance = () => {
   const location = useLocation();
@@ -19,6 +20,8 @@ const Attendance = () => {
   const [classDetails, setClassDetails] = useState(null);
   const [matricNumber, setMatricNumber] = useState("");
   const [name, setName] = useState("");
+  const [deviceFingerprint, setDeviceFingerprint] = useState(null);
+  const [deviceTrusted, setDeviceTrusted] = useState(false);
 
   const courseId = queryParams.get("courseId");
   const courseCode = queryParams.get("courseCode");
@@ -71,11 +74,39 @@ const Attendance = () => {
     getUserLocation();
   }, [lat, lng]);
 
+  // Verify device fingerprint on page load
+  useEffect(() => {
+    const initializeDevice = async () => {
+      const isVerified = await verifyDeviceFingerprint();
+      
+      if (!isVerified) {
+        // First time on this device - store fingerprint
+        const fingerprint = await getDeviceFingerprint();
+        await storeDeviceFingerprint();
+        setDeviceFingerprint(fingerprint?.hash);
+        setDeviceTrusted(true);
+      } else {
+        // Device already trusted
+        const fingerprint = await getDeviceFingerprint();
+        setDeviceFingerprint(fingerprint?.hash);
+        setDeviceTrusted(true);
+      }
+    };
+
+    initializeDevice();
+  }, []);
+
   const handleRegister = async (e) => {
     e.preventDefault();
 
     if (!matricNumber || !name) {
       toast.error("Name and Matriculation number are required.");
+      return;
+    }
+
+    // Check if device is trusted
+    if (!deviceTrusted) {
+      toast.error("Device verification failed. Please refresh the page.");
       return;
     }
 
@@ -107,10 +138,23 @@ const Attendance = () => {
       return;
     }
 
+    // Check if device has already been used for this class
+    const deviceAlreadyUsed = attendance.some(
+      (attendee) => attendee.device_fingerprint === deviceFingerprint
+    );
+
+    if (deviceAlreadyUsed) {
+      toast.error("This device has already been used to mark attendance in this class. Device fraud detected!");
+      setIsLoading(false);
+      return;
+    }
+
     const newAttendee = {
       matric_no: matricNumber.trim().toUpperCase(),
       name: name.trim().toUpperCase(),
       timestamp: new Date().toISOString(),
+      device_fingerprint: deviceFingerprint, // Add device fingerprint
+      device_verified: true,
     };
 
     const updatedattendance = [...attendance, newAttendee];
